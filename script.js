@@ -1,10 +1,5 @@
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-const REDDIT_SUBS = [
-  { name: "r/formula1",    url: "https://www.reddit.com/r/formula1/hot.json?limit=15&raw_json=1" },
-  { name: "r/formuladank", url: "https://www.reddit.com/r/formuladank/hot.json?limit=8&raw_json=1" },
-];
-
 const RSS_FEEDS = [
   { name: "Autosport",      url: "https://www.autosport.com/rss/f1/news/" },
   { name: "RaceFans",       url: "https://www.racefans.net/feed/" },
@@ -12,36 +7,31 @@ const RSS_FEEDS = [
   { name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/" },
 ];
 
-// Gossip & insider Twitter accounts via Nitter RSS
-// Nitter instances rotate — we try multiple
-const NITTER_INSTANCES = [
-  "https://nitter.poast.org",
-  "https://nitter.privacydev.net",
-  "https://nitter.cz",
+// Reddit via RSS — works through rss2json just like news feeds
+const REDDIT_FEEDS = [
+  { name: "r/formula1",    url: "https://www.reddit.com/r/formula1/.rss?limit=20" },
+  { name: "r/formuladank", url: "https://www.reddit.com/r/formuladank/.rss?limit=10" },
 ];
 
-const TWITTER_ACCOUNTS = [
-  { handle: "f1gossip",        label: "F1 Gossip" },
-  { handle: "F1transfers",     label: "F1 Transfers" },
-  { handle: "pitlaneinsider_", label: "Pitlane Insider" },
-  { handle: "MissedApex_F1",   label: "Missed Apex" },
-  { handle: "juniorformula",   label: "Junior Formula" },
-  { handle: "RacingLines_F1",  label: "Racing Lines" },
-  { handle: "LandoNorris",     label: "Lando Norris" },
-  { handle: "Charles_Leclerc", label: "Charles Leclerc" },
+// Bluesky F1 gossip/insider accounts — free open API, no auth needed
+const BSKY_ACCOUNTS = [
+  { handle: "formula1.bsky.social",     label: "Formula 1" },
+  { handle: "racefans.bsky.social",     label: "RaceFans" },
+  { handle: "therace.bsky.social",      label: "The Race" },
+  { handle: "autosport.bsky.social",    label: "Autosport" },
 ];
 
-const RSS_PROXIES = [
-  url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`,
-  url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-];
+// Bluesky search terms for gossip
+const BSKY_SEARCH_TERMS = ["F1 gossip", "Formula 1 transfer", "F1 rumour", "formula1"];
+
+const RSS_PROXY = url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`;
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   loadAll();
-  document.getElementById("refresh-btn").addEventListener("click", () => loadAll());
+  document.getElementById("refresh-btn").addEventListener("click", loadAll);
 });
 
 // ─── TABS ─────────────────────────────────────────────────────────────────────
@@ -67,171 +57,113 @@ async function loadAll() {
   setLastUpdated("Loading...");
   showSkeletons();
 
-  const [newsRes, redditRes, twitterRes] = await Promise.allSettled([
-    fetchAllRSS(),
-    fetchReddit(),
-    fetchTwitter(),
+  const [newsRes, redditRes, socialRes] = await Promise.allSettled([
+    fetchAllRSS(RSS_FEEDS),
+    fetchAllRSS(REDDIT_FEEDS),
+    fetchBluesky(),
   ]);
 
-  const news    = newsRes.status    === "fulfilled" ? newsRes.value    : [];
-  const reddit  = redditRes.status  === "fulfilled" ? redditRes.value  : [];
-  const twitter = twitterRes.status === "fulfilled" ? twitterRes.value : [];
+  const news   = newsRes.status   === "fulfilled" ? newsRes.value   : [];
+  const reddit = redditRes.status === "fulfilled" ? redditRes.value : [];
+  const social = socialRes.status === "fulfilled" ? socialRes.value : [];
 
-  renderNews(news);
-  renderReddit(reddit);
-  renderTwitter(twitter);
-  renderWeekly([...news, ...reddit, ...twitter]);
+  renderFeed("news-feed",    news,   "News couldn't load. Hit Refresh.");
+  renderFeed("reddit-feed",  reddit, "Reddit couldn't load. Hit Refresh.");
+  renderFeed("social-feed",  social, "Social feed couldn't load. Hit Refresh.");
+  renderWeekly([...news, ...reddit, ...social]);
   setLastUpdated(nowStr());
 
   btn.disabled = false;
   btn.textContent = "↻ Refresh";
 }
 
-// ─── RSS NEWS ─────────────────────────────────────────────────────────────────
+// ─── RSS (news + reddit both use this) ───────────────────────────────────────
 
-async function fetchAllRSS() {
-  const results = await Promise.allSettled(RSS_FEEDS.map(fetchOneFeed));
+async function fetchAllRSS(feeds) {
+  const results = await Promise.allSettled(feeds.map(fetchOneFeed));
   let items = [];
   results.forEach(r => { if (r.status === "fulfilled") items = items.concat(r.value); });
   items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
   const recent = items.filter(i => new Date(i.pubDate).getTime() > cutoff);
-  return recent.length >= 3 ? recent : items.slice(0, 20);
+  return recent.length >= 2 ? recent : items.slice(0, 20);
 }
 
 async function fetchOneFeed(feed) {
-  for (const proxyFn of RSS_PROXIES) {
-    try {
-      const res = await fetch(proxyFn(feed.url), { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const data = await res.json();
-
-      if (data.items && Array.isArray(data.items)) {
-        return data.items.slice(0, 8).map(item => ({
-          source: feed.name,
-          title: (item.title || "").trim(),
-          link: item.link || "#",
-          pubDate: item.pubDate || new Date().toISOString(),
-          type: "news",
-        })).filter(i => i.title);
-      }
-    } catch (e) { /* try next */ }
+  try {
+    const res = await fetch(RSS_PROXY(feed.url), { signal: AbortSignal.timeout(10000) });
+    if (!res.ok) throw new Error("bad response");
+    const data = await res.json();
+    if (!data.items || !Array.isArray(data.items)) throw new Error("no items");
+    return data.items.slice(0, 10).map(item => ({
+      source: feed.name,
+      title: stripHtml(item.title || "").trim(),
+      link: item.link || item.url || "#",
+      pubDate: item.pubDate || new Date().toISOString(),
+      type: feed.name.startsWith("r/") ? "reddit" : "news",
+    })).filter(i => i.title.length > 5);
+  } catch (e) {
+    return [];
   }
-  return [];
 }
 
-// ─── REDDIT ──────────────────────────────────────────────────────────────────
-// Reddit's .json endpoint works directly from browser — no proxy needed
+// ─── BLUESKY ─────────────────────────────────────────────────────────────────
+// Bluesky has a completely open public API — no auth, no proxy needed
 
-async function fetchReddit() {
+async function fetchBluesky() {
   let items = [];
-  for (const sub of REDDIT_SUBS) {
+
+  // Search for F1 gossip posts
+  for (const term of BSKY_SEARCH_TERMS.slice(0, 2)) {
     try {
-      const res = await fetch(sub.url, {
-        headers: { "Accept": "application/json" },
-        signal: AbortSignal.timeout(8000),
-      });
+      const url = `https://public.api.bsky.app/xrpc/app.bsky.feed.searchPosts?q=${encodeURIComponent(term)}&limit=10&sort=latest`;
+      const res = await fetch(url, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) continue;
       const data = await res.json();
-      const posts = data?.data?.children || [];
+      const posts = data.posts || [];
       const mapped = posts
-        .filter(p => !p.data.stickied)
-        .slice(0, 10)
+        .filter(p => p.record?.text && p.record.text.length > 20)
         .map(p => ({
-          source: sub.name,
-          title: p.data.title,
-          link: "https://reddit.com" + p.data.permalink,
-          pubDate: new Date(p.data.created_utc * 1000).toISOString(),
-          score: p.data.score,
-          comments: p.data.num_comments,
-          type: "reddit",
+          source: p.author?.displayName || p.author?.handle || "Bluesky",
+          handle: p.author?.handle || "",
+          title: p.record.text.slice(0, 220),
+          link: `https://bsky.app/profile/${p.author?.handle}/post/${p.uri?.split("/").pop()}`,
+          pubDate: p.record?.createdAt || new Date().toISOString(),
+          likes: p.likeCount || 0,
+          type: "social",
         }));
       items = items.concat(mapped);
     } catch (e) { /* skip */ }
   }
+
+  // Deduplicate by link
+  const seen = new Set();
+  items = items.filter(i => {
+    if (seen.has(i.link)) return false;
+    seen.add(i.link);
+    return true;
+  });
+
   items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-  return items;
+  return items.slice(0, 15);
 }
 
-// ─── TWITTER via NITTER RSS ───────────────────────────────────────────────────
+// ─── RENDER ───────────────────────────────────────────────────────────────────
 
-async function fetchTwitter() {
-  // Pick a random Nitter instance to spread load
-  const instance = NITTER_INSTANCES[Math.floor(Math.random() * NITTER_INSTANCES.length)];
-  let items = [];
-
-  // Fetch a few accounts in parallel (don't slam the server with all of them)
-  const sample = TWITTER_ACCOUNTS.sort(() => 0.5 - Math.random()).slice(0, 5);
-
-  const results = await Promise.allSettled(
-    sample.map(acc => fetchNitterAccount(instance, acc))
-  );
-
-  results.forEach(r => { if (r.status === "fulfilled") items = items.concat(r.value); });
-  items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-  return items.slice(0, 20);
-}
-
-async function fetchNitterAccount(instance, acc) {
-  const rssUrl = `${instance}/${acc.handle}/rss`;
-  for (const proxyFn of RSS_PROXIES) {
-    try {
-      const res = await fetch(proxyFn(rssUrl), { signal: AbortSignal.timeout(8000) });
-      if (!res.ok) continue;
-      const data = await res.json();
-      if (!data.items || !Array.isArray(data.items)) continue;
-      return data.items.slice(0, 4).map(item => ({
-        source: acc.label,
-        handle: acc.handle,
-        title: stripHtml(item.description || item.title || "").slice(0, 200),
-        link: `https://twitter.com/${acc.handle}`,
-        pubDate: item.pubDate || new Date().toISOString(),
-        type: "twitter",
-      })).filter(i => i.title.length > 10);
-    } catch (e) { /* try next proxy */ }
-  }
-  return [];
-}
-
-// ─── RENDER: NEWS ─────────────────────────────────────────────────────────────
-
-function renderNews(items) {
-  const el = document.getElementById("news-feed");
+function renderFeed(id, items, errMsg) {
+  const el = document.getElementById(id);
+  if (!el) return;
   if (!items.length) {
-    el.innerHTML = errorState("News couldn't load.", "Hit Refresh or try again soon.");
+    el.innerHTML = errorState(errMsg);
     return;
   }
   el.innerHTML = items.map(item => cardHtml(item)).join("");
 }
-
-// ─── RENDER: REDDIT ───────────────────────────────────────────────────────────
-
-function renderReddit(items) {
-  const el = document.getElementById("reddit-feed");
-  if (!items.length) {
-    el.innerHTML = errorState("Reddit couldn't load.", "Hit Refresh.");
-    return;
-  }
-  el.innerHTML = items.map(item => cardHtml(item)).join("");
-}
-
-// ─── RENDER: TWITTER ──────────────────────────────────────────────────────────
-
-function renderTwitter(items) {
-  const el = document.getElementById("twitter-feed");
-  if (!items.length) {
-    el.innerHTML = errorState("Twitter gossip couldn't load.", "Nitter instances go up and down — try Refresh.");
-    return;
-  }
-  el.innerHTML = items.map(item => cardHtml(item)).join("");
-}
-
-// ─── RENDER: WEEKLY ───────────────────────────────────────────────────────────
 
 function renderWeekly(items) {
   const el = document.getElementById("weekly-feed");
   if (!items.length) {
-    el.innerHTML = errorState("Nothing loaded yet.", "Go to TODAY tab and hit Refresh first.");
+    el.innerHTML = errorState("Load the TODAY tab first, then come here.");
     return;
   }
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -239,17 +171,17 @@ function renderWeekly(items) {
     .filter(i => new Date(i.pubDate).getTime() > cutoff)
     .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
+  if (!week.length) {
+    el.innerHTML = errorState("Nothing from the last 7 days. Try Refresh.");
+    return;
+  }
+
   const byDay = {};
   week.forEach(item => {
     const d = dayLabel(item.pubDate);
     if (!byDay[d]) byDay[d] = [];
     byDay[d].push(item);
   });
-
-  if (!Object.keys(byDay).length) {
-    el.innerHTML = errorState("Nothing from the last 7 days.", "Try refreshing.");
-    return;
-  }
 
   el.innerHTML = Object.entries(byDay).map(([day, dayItems]) => `
     <div class="week-group">
@@ -261,20 +193,21 @@ function renderWeekly(items) {
   `).join("");
 }
 
-// ─── SHARED CARD HTML ─────────────────────────────────────────────────────────
+// ─── CARD HTML ────────────────────────────────────────────────────────────────
 
 function cardHtml(item) {
   const cls = item.type === "reddit" ? "reddit"
-            : item.type === "twitter" ? "twitter-card"
+            : item.type === "social" ? "social-card"
             : "";
-  const icon = item.type === "twitter" ? "𝕏 " : "";
+  const prefix = item.type === "social" ? "🦋 " : "";
   return `
     <a class="news-card ${cls}" href="${item.link}" target="_blank" rel="noopener noreferrer">
-      <div class="card-source">${icon}${escHtml(item.source)}</div>
+      <div class="card-source">${prefix}${escHtml(item.source)}</div>
       <div class="card-title">${escHtml(item.title)}</div>
       <div class="card-meta">
-        ${item.score != null ? `<span class="card-score">▲ ${fmtNum(item.score)}</span>` : ""}
+        ${item.score  != null ? `<span class="card-score">▲ ${fmtNum(item.score)}</span>` : ""}
         ${item.comments != null ? `<span>💬 ${fmtNum(item.comments)}</span>` : ""}
+        ${item.likes  != null && item.type === "social" ? `<span>♥ ${fmtNum(item.likes)}</span>` : ""}
         <span>${timeAgo(item.pubDate)}</span>
       </div>
     </a>
@@ -285,18 +218,14 @@ function cardHtml(item) {
 
 function showSkeletons() {
   const skel = '<div class="skeleton-card"></div>'.repeat(4);
-  ["news-feed", "reddit-feed", "twitter-feed", "weekly-feed"].forEach(id => {
+  ["news-feed", "reddit-feed", "social-feed", "weekly-feed"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = skel;
   });
 }
 
-function errorState(msg, hint) {
-  return `<div class="error-state">
-    <div class="err-icon">⚠️</div>
-    <div class="err-msg">${msg}</div>
-    ${hint ? `<div>${hint}</div>` : ""}
-  </div>`;
+function errorState(msg) {
+  return `<div class="error-state"><div class="err-icon">⚠️</div><div class="err-msg">${msg}</div></div>`;
 }
 
 function setLastUpdated(str) {
@@ -344,5 +273,6 @@ function escHtml(str) {
 }
 
 function stripHtml(str) {
+  if (!str) return "";
   return str.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
