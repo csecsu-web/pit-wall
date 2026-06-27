@@ -1,5 +1,10 @@
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
+const REDDIT_SUBS = [
+  { name: "r/formula1",    url: "https://www.reddit.com/r/formula1/hot.json?limit=15&raw_json=1" },
+  { name: "r/formuladank", url: "https://www.reddit.com/r/formuladank/hot.json?limit=8&raw_json=1" },
+];
+
 const RSS_FEEDS = [
   { name: "Autosport",      url: "https://www.autosport.com/rss/f1/news/" },
   { name: "RaceFans",       url: "https://www.racefans.net/feed/" },
@@ -7,19 +12,28 @@ const RSS_FEEDS = [
   { name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/" },
 ];
 
-const REDDIT_URL = "https://www.reddit.com/r/formula1/hot.json?limit=20&raw_json=1";
-
-// Multiple free RSS→JSON proxies as fallbacks
-const RSS_PROXIES = [
-  url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`,
-  url => `https://feedparse.deno.dev/api?url=${encodeURIComponent(url)}`,
+// Gossip & insider Twitter accounts via Nitter RSS
+// Nitter instances rotate — we try multiple
+const NITTER_INSTANCES = [
+  "https://nitter.poast.org",
+  "https://nitter.privacydev.net",
+  "https://nitter.cz",
 ];
 
-// Multiple CORS proxies for Reddit as fallbacks
-const CORS_PROXIES = [
+const TWITTER_ACCOUNTS = [
+  { handle: "f1gossip",        label: "F1 Gossip" },
+  { handle: "F1transfers",     label: "F1 Transfers" },
+  { handle: "pitlaneinsider_", label: "Pitlane Insider" },
+  { handle: "MissedApex_F1",   label: "Missed Apex" },
+  { handle: "juniorformula",   label: "Junior Formula" },
+  { handle: "RacingLines_F1",  label: "Racing Lines" },
+  { handle: "LandoNorris",     label: "Lando Norris" },
+  { handle: "Charles_Leclerc", label: "Charles Leclerc" },
+];
+
+const RSS_PROXIES = [
+  url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`,
   url => `https://corsproxy.io/?${encodeURIComponent(url)}`,
-  url => `https://api.allorigins.win/get?url=${encodeURIComponent(url)}`,
-  url => `https://thingproxy.freeboard.io/fetch/${url}`,
 ];
 
 // ─── INIT ─────────────────────────────────────────────────────────────────────
@@ -27,7 +41,7 @@ const CORS_PROXIES = [
 document.addEventListener("DOMContentLoaded", () => {
   setupTabs();
   loadAll();
-  document.getElementById("refresh-btn").addEventListener("click", () => loadAll(true));
+  document.getElementById("refresh-btn").addEventListener("click", () => loadAll());
 });
 
 // ─── TABS ─────────────────────────────────────────────────────────────────────
@@ -53,31 +67,33 @@ async function loadAll() {
   setLastUpdated("Loading...");
   showSkeletons();
 
-  const [newsResult, redditResult] = await Promise.allSettled([
+  const [newsRes, redditRes, twitterRes] = await Promise.allSettled([
     fetchAllRSS(),
     fetchReddit(),
+    fetchTwitter(),
   ]);
 
-  const news   = newsResult.status   === "fulfilled" ? newsResult.value   : [];
-  const reddit = redditResult.status === "fulfilled" ? redditResult.value : [];
+  const news    = newsRes.status    === "fulfilled" ? newsRes.value    : [];
+  const reddit  = redditRes.status  === "fulfilled" ? redditRes.value  : [];
+  const twitter = twitterRes.status === "fulfilled" ? twitterRes.value : [];
 
   renderNews(news);
   renderReddit(reddit);
-  renderWeekly([...news, ...reddit]);
+  renderTwitter(twitter);
+  renderWeekly([...news, ...reddit, ...twitter]);
   setLastUpdated(nowStr());
 
   btn.disabled = false;
   btn.textContent = "↻ Refresh";
 }
 
-// ─── RSS ──────────────────────────────────────────────────────────────────────
+// ─── RSS NEWS ─────────────────────────────────────────────────────────────────
 
 async function fetchAllRSS() {
   const results = await Promise.allSettled(RSS_FEEDS.map(fetchOneFeed));
   let items = [];
   results.forEach(r => { if (r.status === "fulfilled") items = items.concat(r.value); });
   items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-  // Keep last 48h, fallback to top 20
   const cutoff = Date.now() - 48 * 60 * 60 * 1000;
   const recent = items.filter(i => new Date(i.pubDate).getTime() > cutoff);
   return recent.length >= 3 ? recent : items.slice(0, 20);
@@ -90,58 +106,39 @@ async function fetchOneFeed(feed) {
       if (!res.ok) continue;
       const data = await res.json();
 
-      // rss2json format
       if (data.items && Array.isArray(data.items)) {
         return data.items.slice(0, 8).map(item => ({
           source: feed.name,
           title: (item.title || "").trim(),
-          link: item.link || item.url || "#",
-          pubDate: item.pubDate || item.published || new Date().toISOString(),
-          type: "news",
-        })).filter(i => i.title);
-      }
-
-      // feedparse format
-      if (data.feed && data.feed.entries) {
-        return data.feed.entries.slice(0, 8).map(item => ({
-          source: feed.name,
-          title: (item.title || "").trim(),
           link: item.link || "#",
-          pubDate: item.published || new Date().toISOString(),
+          pubDate: item.pubDate || new Date().toISOString(),
           type: "news",
         })).filter(i => i.title);
       }
-    } catch (e) {
-      // try next proxy
-    }
+    } catch (e) { /* try next */ }
   }
   return [];
 }
 
 // ─── REDDIT ──────────────────────────────────────────────────────────────────
+// Reddit's .json endpoint works directly from browser — no proxy needed
 
 async function fetchReddit() {
-  for (const proxyFn of CORS_PROXIES) {
+  let items = [];
+  for (const sub of REDDIT_SUBS) {
     try {
-      const res = await fetch(proxyFn(REDDIT_URL), { signal: AbortSignal.timeout(8000) });
+      const res = await fetch(sub.url, {
+        headers: { "Accept": "application/json" },
+        signal: AbortSignal.timeout(8000),
+      });
       if (!res.ok) continue;
-      const text = await res.text();
-      let json;
-      try { json = JSON.parse(text); } catch { continue; }
-
-      // allorigins wraps in { contents: "..." }
-      if (json.contents) {
-        try { json = JSON.parse(json.contents); } catch { continue; }
-      }
-
-      const posts = json?.data?.children || [];
-      if (!posts.length) continue;
-
-      return posts
+      const data = await res.json();
+      const posts = data?.data?.children || [];
+      const mapped = posts
         .filter(p => !p.data.stickied)
-        .slice(0, 15)
+        .slice(0, 10)
         .map(p => ({
-          source: "r/formula1",
+          source: sub.name,
           title: p.data.title,
           link: "https://reddit.com" + p.data.permalink,
           pubDate: new Date(p.data.created_utc * 1000).toISOString(),
@@ -149,9 +146,49 @@ async function fetchReddit() {
           comments: p.data.num_comments,
           type: "reddit",
         }));
-    } catch (e) {
-      // try next proxy
-    }
+      items = items.concat(mapped);
+    } catch (e) { /* skip */ }
+  }
+  items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  return items;
+}
+
+// ─── TWITTER via NITTER RSS ───────────────────────────────────────────────────
+
+async function fetchTwitter() {
+  // Pick a random Nitter instance to spread load
+  const instance = NITTER_INSTANCES[Math.floor(Math.random() * NITTER_INSTANCES.length)];
+  let items = [];
+
+  // Fetch a few accounts in parallel (don't slam the server with all of them)
+  const sample = TWITTER_ACCOUNTS.sort(() => 0.5 - Math.random()).slice(0, 5);
+
+  const results = await Promise.allSettled(
+    sample.map(acc => fetchNitterAccount(instance, acc))
+  );
+
+  results.forEach(r => { if (r.status === "fulfilled") items = items.concat(r.value); });
+  items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  return items.slice(0, 20);
+}
+
+async function fetchNitterAccount(instance, acc) {
+  const rssUrl = `${instance}/${acc.handle}/rss`;
+  for (const proxyFn of RSS_PROXIES) {
+    try {
+      const res = await fetch(proxyFn(rssUrl), { signal: AbortSignal.timeout(8000) });
+      if (!res.ok) continue;
+      const data = await res.json();
+      if (!data.items || !Array.isArray(data.items)) continue;
+      return data.items.slice(0, 4).map(item => ({
+        source: acc.label,
+        handle: acc.handle,
+        title: stripHtml(item.description || item.title || "").slice(0, 200),
+        link: `https://twitter.com/${acc.handle}`,
+        pubDate: item.pubDate || new Date().toISOString(),
+        type: "twitter",
+      })).filter(i => i.title.length > 10);
+    } catch (e) { /* try next proxy */ }
   }
   return [];
 }
@@ -161,16 +198,10 @@ async function fetchReddit() {
 function renderNews(items) {
   const el = document.getElementById("news-feed");
   if (!items.length) {
-    el.innerHTML = errorState("News couldn't load right now.", "Hit Refresh or check back soon.");
+    el.innerHTML = errorState("News couldn't load.", "Hit Refresh or try again soon.");
     return;
   }
-  el.innerHTML = items.map(item => `
-    <a class="news-card" href="${item.link}" target="_blank" rel="noopener noreferrer">
-      <div class="card-source">${escHtml(item.source)}</div>
-      <div class="card-title">${escHtml(item.title)}</div>
-      <div class="card-meta"><span>${timeAgo(item.pubDate)}</span></div>
-    </a>
-  `).join("");
+  el.innerHTML = items.map(item => cardHtml(item)).join("");
 }
 
 // ─── RENDER: REDDIT ───────────────────────────────────────────────────────────
@@ -178,20 +209,21 @@ function renderNews(items) {
 function renderReddit(items) {
   const el = document.getElementById("reddit-feed");
   if (!items.length) {
-    el.innerHTML = errorState("Reddit couldn't load right now.", "Hit Refresh — proxy might be slow.");
+    el.innerHTML = errorState("Reddit couldn't load.", "Hit Refresh.");
     return;
   }
-  el.innerHTML = items.map(item => `
-    <a class="news-card reddit" href="${item.link}" target="_blank" rel="noopener noreferrer">
-      <div class="card-source">r/formula1</div>
-      <div class="card-title">${escHtml(item.title)}</div>
-      <div class="card-meta">
-        <span class="card-score">▲ ${fmtNum(item.score)}</span>
-        <span>💬 ${fmtNum(item.comments)}</span>
-        <span>${timeAgo(item.pubDate)}</span>
-      </div>
-    </a>
-  `).join("");
+  el.innerHTML = items.map(item => cardHtml(item)).join("");
+}
+
+// ─── RENDER: TWITTER ──────────────────────────────────────────────────────────
+
+function renderTwitter(items) {
+  const el = document.getElementById("twitter-feed");
+  if (!items.length) {
+    el.innerHTML = errorState("Twitter gossip couldn't load.", "Nitter instances go up and down — try Refresh.");
+    return;
+  }
+  el.innerHTML = items.map(item => cardHtml(item)).join("");
 }
 
 // ─── RENDER: WEEKLY ───────────────────────────────────────────────────────────
@@ -199,12 +231,13 @@ function renderReddit(items) {
 function renderWeekly(items) {
   const el = document.getElementById("weekly-feed");
   if (!items.length) {
-    el.innerHTML = errorState("Load the daily tab first, then come back here.", "");
+    el.innerHTML = errorState("Nothing loaded yet.", "Go to TODAY tab and hit Refresh first.");
     return;
   }
   const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
-  const week = items.filter(i => new Date(i.pubDate).getTime() > cutoff);
-  week.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
+  const week = items
+    .filter(i => new Date(i.pubDate).getTime() > cutoff)
+    .sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
 
   const byDay = {};
   week.forEach(item => {
@@ -214,7 +247,7 @@ function renderWeekly(items) {
   });
 
   if (!Object.keys(byDay).length) {
-    el.innerHTML = errorState("Nothing from the last 7 days yet.", "Try refreshing.");
+    el.innerHTML = errorState("Nothing from the last 7 days.", "Try refreshing.");
     return;
   }
 
@@ -222,28 +255,40 @@ function renderWeekly(items) {
     <div class="week-group">
       <div class="week-day-label">${day}</div>
       <div class="card-list">
-        ${dayItems.slice(0, 6).map(item => `
-          <a class="news-card ${item.type === "reddit" ? "reddit" : ""}" href="${item.link}" target="_blank" rel="noopener noreferrer">
-            <div class="card-source">${escHtml(item.source)}</div>
-            <div class="card-title">${escHtml(item.title)}</div>
-            <div class="card-meta">
-              ${item.score ? `<span class="card-score">▲ ${fmtNum(item.score)}</span>` : ""}
-              <span>${timeAgo(item.pubDate)}</span>
-            </div>
-          </a>
-        `).join("")}
+        ${dayItems.slice(0, 6).map(item => cardHtml(item)).join("")}
       </div>
     </div>
   `).join("");
+}
+
+// ─── SHARED CARD HTML ─────────────────────────────────────────────────────────
+
+function cardHtml(item) {
+  const cls = item.type === "reddit" ? "reddit"
+            : item.type === "twitter" ? "twitter-card"
+            : "";
+  const icon = item.type === "twitter" ? "𝕏 " : "";
+  return `
+    <a class="news-card ${cls}" href="${item.link}" target="_blank" rel="noopener noreferrer">
+      <div class="card-source">${icon}${escHtml(item.source)}</div>
+      <div class="card-title">${escHtml(item.title)}</div>
+      <div class="card-meta">
+        ${item.score != null ? `<span class="card-score">▲ ${fmtNum(item.score)}</span>` : ""}
+        ${item.comments != null ? `<span>💬 ${fmtNum(item.comments)}</span>` : ""}
+        <span>${timeAgo(item.pubDate)}</span>
+      </div>
+    </a>
+  `;
 }
 
 // ─── HELPERS ──────────────────────────────────────────────────────────────────
 
 function showSkeletons() {
   const skel = '<div class="skeleton-card"></div>'.repeat(4);
-  document.getElementById("news-feed").innerHTML = skel;
-  document.getElementById("reddit-feed").innerHTML = skel;
-  document.getElementById("weekly-feed").innerHTML = skel;
+  ["news-feed", "reddit-feed", "twitter-feed", "weekly-feed"].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.innerHTML = skel;
+  });
 }
 
 function errorState(msg, hint) {
@@ -289,11 +334,15 @@ function isSameDay(a, b) {
 }
 
 function fmtNum(n) {
-  if (!n) return "0";
+  if (n == null) return "0";
   return n >= 1000 ? (n / 1000).toFixed(1) + "k" : String(n);
 }
 
 function escHtml(str) {
   if (!str) return "";
   return str.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+function stripHtml(str) {
+  return str.replace(/<[^>]*>/g, "").replace(/\s+/g, " ").trim();
 }
