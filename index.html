@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Pit Wall — F1 Daily Briefing</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;900&family=Barlow:wght@400;500;600&family=Share+Tech+Mono&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="header">
+    <div class="header-inner">
+      <div class="logo-block">
+        <span class="logo-flag">🏁</span>
+        <div>
+          <div class="logo-title">PIT WALL</div>
+          <div class="logo-sub">F1 Daily Briefing</div>
+        </div>
+      </div>
+      <div class="header-right">
+        <div class="live-dot"></div>
+        <span class="live-label" id="last-updated">Loading...</span>
+      </div>
+    </div>
+  </header>
+
+  <main class="main">
+
+    <!-- Tab nav -->
+    <nav class="tab-nav">
+      <button class="tab-btn active" data-tab="daily">TODAY</button>
+      <button class="tab-btn" data-tab="weekly">THIS WEEK</button>
+    </nav>
+
+    <!-- Daily tab -->
+    <section class="tab-content active" id="tab-daily">
+
+      <div class="section-label">NEWS</div>
+      <div id="news-feed" class="card-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+
+      <div class="section-label" style="margin-top:2rem;">SOCIAL CHATTER <span class="tag">Reddit</span></div>
+      <div id="reddit-feed" class="card-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+
+    </section>
+
+    <!-- Weekly tab -->
+    <section class="tab-content" id="tab-weekly">
+      <div class="section-label">WEEKLY RECAP</div>
+      <div id="weekly-feed" class="card-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+    </section>
+
+  </main>
+
+  <footer class="footer">
+    <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
+    <span class="footer-note">Sources: Autosport · RaceFans · The Race · r/formula1</span>
+  </footer>
+
+  <script src="script.js"></script>
+</body>
+</html>
