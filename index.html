@@ -28,7 +28,6 @@
 
   <main class="main">
 
-    <!-- Tab nav -->
     <nav class="tab-nav">
       <button class="tab-btn active" data-tab="daily">TODAY</button>
       <button class="tab-btn" data-tab="weekly">THIS WEEK</button>
@@ -37,14 +36,21 @@
     <!-- Daily tab -->
     <section class="tab-content active" id="tab-daily">
 
-      <div class="section-label">NEWS</div>
+      <div class="section-label">NEWS OUTLETS</div>
       <div id="news-feed" class="card-list">
         <div class="skeleton-card"></div>
         <div class="skeleton-card"></div>
         <div class="skeleton-card"></div>
       </div>
 
-      <div class="section-label" style="margin-top:2rem;">SOCIAL CHATTER <span class="tag">Reddit</span></div>
+      <div class="section-label" style="margin-top:2rem;">GOSSIP &amp; SOCIAL <span class="tag">𝕏 Twitter</span></div>
+      <div id="twitter-feed" class="card-list">
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+        <div class="skeleton-card"></div>
+      </div>
+
+      <div class="section-label" style="margin-top:2rem;">COMMUNITY <span class="tag">Reddit</span></div>
       <div id="reddit-feed" class="card-list">
         <div class="skeleton-card"></div>
         <div class="skeleton-card"></div>
@@ -67,7 +73,7 @@
 
   <footer class="footer">
     <button class="refresh-btn" id="refresh-btn">↻ Refresh</button>
-    <span class="footer-note">Sources: Autosport · RaceFans · The Race · r/formula1</span>
+    <span class="footer-note">Autosport · RaceFans · The Race · r/formula1 · r/formuladank · 𝕏 gossip</span>
   </footer>
 
   <script src="script.js"></script>
