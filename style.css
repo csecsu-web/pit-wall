@@ -193,12 +193,24 @@ a { color: inherit; text-decoration: none; }
   border-left-color: #ff6b35;
 }
 
-.news-card.social-card {
-  border-left-color: #0085ff;
+.news-card.gossip-card {
+  border-left-color: #ff6b35;
 }
 
-.news-card.social-card:hover {
-  border-left-color: #60b4ff;
+.news-card.gossip-card:hover {
+  border-left-color: #ffaa80;
+}
+
+.flair {
+  background: var(--surface2);
+  color: var(--accent2);
+  font-size: 0.5rem;
+  padding: 0.1rem 0.35rem;
+  border-radius: 2px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-left: 0.3rem;
+  vertical-align: middle;
 }
 
 .card-source {
