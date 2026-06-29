@@ -1,23 +1,26 @@
 // ─── CONFIG ──────────────────────────────────────────────────────────────────
 
-// News + gossip RSS feeds
 const NEWS_FEEDS = [
-  { name: "Autosport",      url: "https://www.autosport.com/rss/f1/news/",          type: "news" },
-  { name: "RaceFans",       url: "https://www.racefans.net/feed/",                  type: "news" },
-  { name: "The Race",       url: "https://the-race.com/feed/",                      type: "news" },
-  { name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/",         type: "news" },
-  { name: "PlanetF1",       url: "https://www.planetf1.com/ps-rss",                 type: "gossip" },
-  { name: "Sky Sports F1",  url: "https://www.skysports.com/rss/12433",             type: "gossip" },
-  { name: "Joe Saward",     url: "https://joesaward.wordpress.com/feed/",           type: "gossip" },
-  { name: "Adam Cooper F1", url: "https://adamcooperf1.com/feed/",                  type: "gossip" },
+  { name: "Autosport",      url: "https://www.autosport.com/rss/f1/news/",   type: "news" },
+  { name: "RaceFans",       url: "https://www.racefans.net/feed/",           type: "news" },
+  { name: "The Race",       url: "https://the-race.com/feed/",               type: "news" },
+  { name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/",  type: "news" },
+  { name: "BBC Sport F1",   url: "https://feeds.bbci.co.uk/sport/formula1/rss.xml", type: "news" },
 ];
 
-// Reddit subs — gossip, community, memes, technical drama
+const GOSSIP_FEEDS = [
+  { name: "PlanetF1",       url: "https://www.planetf1.com/ps-rss",               type: "gossip" },
+  { name: "Sky Sports F1",  url: "https://www.skysports.com/rss/12433",            type: "gossip" },
+  { name: "Joe Saward",     url: "https://joesaward.wordpress.com/feed/",          type: "gossip" },
+  { name: "Adam Cooper F1", url: "https://adamcooperf1.com/feed/",                 type: "gossip" },
+  { name: "Crash.net F1",   url: "https://www.crash.net/rss/f1",                   type: "gossip" },
+];
+
+// Reddit via RSS — goes through same proxy as everything else, reliable
 const REDDIT_FEEDS = [
-  { name: "r/formula1",        url: "https://www.reddit.com/r/formula1/new.json?limit=20&raw_json=1" },
-  { name: "r/formuladank",     url: "https://www.reddit.com/r/formuladank/hot.json?limit=10&raw_json=1" },
-  { name: "r/F1Technical",     url: "https://www.reddit.com/r/F1Technical/hot.json?limit=8&raw_json=1" },
-  { name: "r/formula1",        url: "https://www.reddit.com/r/formula1/search.json?q=flair%3ARumour+OR+flair%3ANews&sort=new&limit=10&raw_json=1" },
+  { name: "r/formula1",    url: "https://www.reddit.com/r/formula1/new/.rss?limit=20",   type: "reddit" },
+  { name: "r/formuladank", url: "https://www.reddit.com/r/formuladank/hot/.rss?limit=10",type: "reddit" },
+  { name: "r/F1Technical", url: "https://www.reddit.com/r/F1Technical/hot/.rss?limit=8", type: "reddit" },
 ];
 
 const RSS_PROXY = url => `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(url)}`;
@@ -54,9 +57,9 @@ async function loadAll() {
   showSkeletons();
 
   const [newsRes, gossipRes, redditRes] = await Promise.allSettled([
-    fetchRSSGroup(NEWS_FEEDS.filter(f => f.type === "news")),
-    fetchRSSGroup(NEWS_FEEDS.filter(f => f.type === "gossip")),
-    fetchReddit(),
+    fetchRSSGroup(NEWS_FEEDS),
+    fetchRSSGroup(GOSSIP_FEEDS),
+    fetchRSSGroup(REDDIT_FEEDS),
   ]);
 
   const news   = newsRes.status   === "fulfilled" ? newsRes.value   : [];
@@ -73,7 +76,7 @@ async function loadAll() {
   btn.textContent = "↻ Refresh";
 }
 
-// ─── RSS ──────────────────────────────────────────────────────────────────────
+// ─── RSS (all feeds use same proxy) ──────────────────────────────────────────
 
 async function fetchRSSGroup(feeds) {
   const results = await Promise.allSettled(feeds.map(fetchOneFeed));
@@ -96,49 +99,11 @@ async function fetchOneFeed(feed) {
       title: stripHtml(item.title || "").trim(),
       link: item.link || item.url || "#",
       pubDate: item.pubDate || new Date().toISOString(),
-      type: feed.type || "news",
+      type: feed.type,
     })).filter(i => i.title.length > 5);
   } catch (e) {
     return [];
   }
-}
-
-// ─── REDDIT (direct JSON — no proxy needed in browser) ───────────────────────
-
-async function fetchReddit() {
-  let items = [];
-  const seen = new Set();
-
-  for (const feed of REDDIT_FEEDS) {
-    try {
-      const res = await fetch(feed.url, {
-        headers: { "Accept": "application/json" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) continue;
-      const data = await res.json();
-      const posts = data?.data?.children || [];
-      posts
-        .filter(p => !p.data.stickied && !seen.has(p.data.id))
-        .slice(0, 10)
-        .forEach(p => {
-          seen.add(p.data.id);
-          items.push({
-            source: feed.name,
-            title: p.data.title,
-            link: "https://reddit.com" + p.data.permalink,
-            pubDate: new Date(p.data.created_utc * 1000).toISOString(),
-            score: p.data.score,
-            comments: p.data.num_comments,
-            flair: p.data.link_flair_text || "",
-            type: "reddit",
-          });
-        });
-    } catch (e) { /* skip */ }
-  }
-
-  items.sort((a, b) => new Date(b.pubDate) - new Date(a.pubDate));
-  return items;
 }
 
 // ─── RENDER ───────────────────────────────────────────────────────────────────
@@ -186,21 +151,15 @@ function renderWeekly(items) {
   `).join("");
 }
 
-// ─── CARD HTML ────────────────────────────────────────────────────────────────
-
 function cardHtml(item) {
   const cls = item.type === "reddit"  ? "reddit"
             : item.type === "gossip"  ? "gossip-card"
             : "";
   return `
     <a class="news-card ${cls}" href="${item.link}" target="_blank" rel="noopener noreferrer">
-      <div class="card-source">${escHtml(item.source)}${item.flair ? ` <span class="flair">${escHtml(item.flair)}</span>` : ""}</div>
+      <div class="card-source">${escHtml(item.source)}</div>
       <div class="card-title">${escHtml(item.title)}</div>
-      <div class="card-meta">
-        ${item.score    != null ? `<span class="card-score">▲ ${fmtNum(item.score)}</span>` : ""}
-        ${item.comments != null ? `<span>💬 ${fmtNum(item.comments)}</span>` : ""}
-        <span>${timeAgo(item.pubDate)}</span>
-      </div>
+      <div class="card-meta"><span>${timeAgo(item.pubDate)}</span></div>
     </a>
   `;
 }
