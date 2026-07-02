@@ -6,6 +6,8 @@ const NEWS_FEEDS = [
   { name: "The Race",       url: "https://the-race.com/feed/",               type: "news" },
   { name: "Motorsport.com", url: "https://www.motorsport.com/rss/f1/news/",  type: "news" },
   { name: "BBC Sport F1",   url: "https://feeds.bbci.co.uk/sport/formula1/rss.xml", type: "news" },
+  { name: "F1 Academy",      url: "https://www.motorsport.com/rss/f1-academy/news/", type: "academy" },
+  { name: "F1 Academy",      url: "https://www.autosport.com/rss/f1-academy/news/",  type: "academy" },
 ];
 
 const GOSSIP_FEEDS = [
@@ -56,20 +58,23 @@ async function loadAll() {
   setLastUpdated("Loading...");
   showSkeletons();
 
-  const [newsRes, gossipRes, redditRes] = await Promise.allSettled([
-    fetchRSSGroup(NEWS_FEEDS),
+  const [newsRes, academyRes, gossipRes, redditRes] = await Promise.allSettled([
+    fetchRSSGroup(NEWS_FEEDS.filter(f => f.type === 'news')),
+    fetchRSSGroup(NEWS_FEEDS.filter(f => f.type === 'academy')),
     fetchRSSGroup(GOSSIP_FEEDS),
     fetchRSSGroup(REDDIT_FEEDS),
   ]);
 
+  const academy = academyRes.status === "fulfilled" ? academyRes.value : [];
   const news   = newsRes.status   === "fulfilled" ? newsRes.value   : [];
   const gossip = gossipRes.status === "fulfilled" ? gossipRes.value : [];
   const reddit = redditRes.status === "fulfilled" ? redditRes.value : [];
 
-  renderFeed("news-feed",   news,   "News couldn't load. Hit Refresh.");
+  renderFeed("news-feed",    news,    "News couldn't load. Hit Refresh.");
+  renderFeed("academy-feed", academy, "F1 Academy feed couldn't load. Hit Refresh.");
   renderFeed("gossip-feed", gossip, "Gossip feeds couldn't load. Hit Refresh.");
   renderFeed("reddit-feed", reddit, "Reddit couldn't load. Hit Refresh.");
-  renderWeekly([...news, ...gossip, ...reddit]);
+  renderWeekly([...news, ...academy, ...gossip, ...reddit]);
   setLastUpdated(nowStr());
 
   btn.disabled = false;
@@ -153,6 +158,7 @@ function renderWeekly(items) {
 
 function cardHtml(item) {
   const cls = item.type === "reddit"  ? "reddit"
+            : item.type === "academy" ? "academy-card"
             : item.type === "gossip"  ? "gossip-card"
             : "";
   return `
@@ -168,7 +174,7 @@ function cardHtml(item) {
 
 function showSkeletons() {
   const skel = '<div class="skeleton-card"></div>'.repeat(4);
-  ["news-feed", "gossip-feed", "reddit-feed", "weekly-feed"].forEach(id => {
+  ["news-feed", "academy-feed", "gossip-feed", "reddit-feed", "weekly-feed"].forEach(id => {
     const el = document.getElementById(id);
     if (el) el.innerHTML = skel;
   });
